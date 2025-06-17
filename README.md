@@ -84,3 +84,13 @@ https://user-images.githubusercontent.com/87300864/130314393-aa7842e3-978c-4d40-
 ![Tweak_Angles_0_1_6](https://user-images.githubusercontent.com/87300864/229339007-48fbc619-454b-4c70-b699-8a2dfb524c95.png)
 
 https://user-images.githubusercontent.com/87300864/229339025-baf61493-59dc-4dc4-878e-4fc9bcb01a9e.mp4
+
+------------------------------------------------------------------------------------------------------
+
+## Fork 0.1.7  
+1. Added support for assigning **multiple SimpleLattice modifiers to the same object** without overwriting each other.  
+   Modifiers are now named uniquely per object, and each one links to its own vertex group, ensuring deformation isolation.
+
+2. In Object Mode, vertex groups are now automatically created and assigned to corresponding modifiers.  
+   This prevents conflict when applying multiple lattices, even if a modifier is created without selecting vertices.  
+   Removing the vertex group does not remove the modifier, but stacking additional modifiers without vertex control may still cause overlap.
