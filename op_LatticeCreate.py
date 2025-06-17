@@ -187,6 +187,69 @@ class Op_LatticeCreateOperator(bpy.types.Operator):
 
         return False
 
+    # Fork
+    # If not in vertex mode, pass an empty vertex mapping dictionary ----------------------------------------------------------
+    def execute(self, context):
+        self.for_edit_mode(context)
+
+        if not Op_LatticeCreateOperator.init:
+            prefs = bpy.context.preferences.addons[__package__].preferences
+            self.orientation = prefs.default_orientation
+            self.ignore_mods = prefs.default_ignore_mods
+            self.resolution_u = prefs.default_resolution_u
+            self.resolution_v = prefs.default_resolution_v
+            self.resolution_w = prefs.default_resolution_w
+            self.interpolation = prefs.default_interpolation
+            self.scale = prefs.default_scale
+            Op_LatticeCreateOperator.init = True
+
+        objects = []
+        all_objecst_are_meshes = True
+
+        for obj in context.selected_objects:
+            if obj.type in util.allowed_object_types:
+                objects.append(obj)
+                if all_objecst_are_meshes and obj.type != 'MESH':
+                    all_objecst_are_meshes = False
+
+        if len(objects) == 0:
+            objects.append(context.active_object)
+
+        self.vertex_mode = all_objecst_are_meshes and objects[0].mode == 'EDIT'
+
+        if len(objects) > 0:
+            self.group_mapping = {}  # Initialize in case vertex groups are not used
+            self.vert_mapping = None
+            self.cleanup(objects)
+
+            if self.vertex_mode:
+                self.coords, self.vert_mapping = self.get_coords_from_verts(objects)
+
+                if len(self.coords) == 0:
+                    bpy.ops.object.mode_set(mode='EDIT')
+                    self.report({'INFO'}, 'Need to be at least 1 vertex selected')
+                    return {'CANCELLED'}
+
+                self.group_mapping = self.set_vertex_group(objects, self.vert_mapping)
+
+            else:
+                self.coords = self.get_coords_from_objects(objects)
+                self.group_mapping = self.set_vertex_group(objects, vert_mapping=None)  # Generate vertex group for all vertices in Object mode
+
+            lattice = self.createLattice(context)
+            self.matrix = context.active_object.matrix_world.copy()
+
+            self.update_lattice_from_bbox(context, lattice, self.coords, self.matrix)
+            self.add_ffd_modifier(objects, lattice, self.group_mapping)
+            self.set_selection(context, lattice, objects)
+
+            context.view_layer.update()
+            return {'FINISHED'}
+
+        return {'CANCELLED'}
+
+    # Original -----------------------------------------------------------------------------------
+    '''
     def execute(self, context):
         # if add lattice in Edit mode, 
         # preventing undo objects data if settings in "Adjust last action" panel was changed
@@ -284,6 +347,7 @@ class Op_LatticeCreateOperator(bpy.types.Operator):
             return {'FINISHED'}
         else:
             return {'CANCELLED'}
+    '''
 
     def set_selection(self, context, lattice, other):        
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -430,6 +494,37 @@ class Op_LatticeCreateOperator(bpy.types.Operator):
 
         self.updateLattice(lattice, location, rotation, scale)
 
+    # Fork
+    # Generate a unique name for the new lattice object ----------------------------------------------------------
+    def createLattice(self, context):
+        object_active = bpy.context.view_layer.objects.active
+
+        base_name = object_active.name + '_SimpleLattice'
+        name = base_name
+        i = 1
+        while name in bpy.data.objects:
+            name = f"{base_name}_{i}"
+            i += 1
+
+        lattice_data = bpy.data.lattices.new(name)
+        lattice_obj = bpy.data.objects.new(name, lattice_data)
+
+
+        # create Lattice in the collection with the active selected object
+        obj = bpy.context.object
+        ucol = obj.users_collection
+        try:
+            for i in ucol:
+                layer_collection = bpy.context.view_layer.layer_collection
+                layerColl = recurLayerCollection(layer_collection, i.name)
+                bpy.data.collections[layerColl.name].objects.link(lattice_obj)
+        except:
+            context.scene.collection.objects.link(lattice_obj)
+            
+        return lattice_obj
+
+    # Original-------------------------------------------------------------------------------------
+    '''
     def createLattice(self, context):
         object_active = bpy.context.view_layer.objects.active
         lattice_data = bpy.data.lattices.new(object_active.name + '_SimpleLattice')
@@ -447,7 +542,8 @@ class Op_LatticeCreateOperator(bpy.types.Operator):
             context.scene.collection.objects.link(lattice_obj)
             
         return lattice_obj
-
+    '''
+        
     def updateLattice(self, lattice, location, rotation, scale):
         lattice.data.points_u = self.resolution_u
         lattice.data.points_v = self.resolution_v
@@ -473,6 +569,48 @@ class Op_LatticeCreateOperator(bpy.types.Operator):
                                 scale.y * self.scale,
                                 scale.z * self.scale))
 
+    # Fork
+    # Assign a unique modifier and apply the matching vertex group from group_mapping ----------------------------------------------------------
+    def add_ffd_modifier(self, objects, lattice, group_mapping):
+        for obj in objects:
+            if obj.type in {"MESH", "CURVE", "SURFACE", "FONT"}:
+                # Set a unique name for the modifier
+                base_name = "SimpleLattice"
+                mod_name = base_name
+                i = 1
+                while mod_name in [m.name for m in obj.modifiers]:
+                    mod_name = f"{base_name}_{i}"
+                    i += 1
+
+                ffd = obj.modifiers.new(mod_name, "LATTICE")
+                obj.modifiers[ffd.name].show_in_editmode = True
+                obj.modifiers[ffd.name].show_on_cage = True
+
+            elif obj.type == "GPENCIL":
+                # Set a unique name for the modifier (GPENCIL)
+                base_name = "SimpleLattice"
+                mod_name = base_name
+                i = 1
+                while mod_name in [m.name for m in obj.grease_pencil_modifiers]:
+                    mod_name = f"{base_name}_{i}"
+                    i += 1
+
+                ffd = obj.grease_pencil_modifiers.new(mod_name, "GP_LATTICE")
+                obj.grease_pencil_modifiers[ffd.name].show_in_editmode = True
+
+            ffd.object = lattice
+
+            # Assign the vertex group using a unique mapping key
+            group_key_prefix = f"{obj.name}_"
+            for key, group_name in group_mapping.items():
+                if key.startswith(group_key_prefix):
+                    ffd.vertex_group = group_name
+                    break # Only assign the first matching vertex group
+
+            obj.update_tag()
+    
+    # Original ---------------------------------------------------------------------------------------------------------------------------------------------------------
+    '''
     def add_ffd_modifier(self, objects, lattice, group_mapping):
         for obj in objects:
             if obj.type == "MESH" or obj.type == "CURVE" or obj.type == "SURFACE" or obj.type == "FONT":
@@ -502,6 +640,7 @@ class Op_LatticeCreateOperator(bpy.types.Operator):
                 ffd.vertex_group = vertex_group_name
 
             obj.update_tag()
+    '''
 
     def cleanup(self, objects):
         for obj in objects:
@@ -545,6 +684,59 @@ class Op_LatticeCreateOperator(bpy.types.Operator):
                     print(f"removed grease pencil modifier: {modifier.name}")
                     obj.grease_pencil_modifiers.remove(modifier)
 
+    # Fork
+    # Create a unique key from object and vertex group names ----------------------------------------
+    def set_vertex_group(self, objects, vert_mapping):
+        group_mapping = {}
+
+        for obj in objects:
+            mode = obj.mode
+            if mode == 'EDIT':
+                bpy.ops.object.editmode_toggle()
+
+            # Generate a unique name for the vertex group
+            base_name = "SimpleLattice"
+            group_name = base_name
+            i = 1
+            existing = [g.name for g in obj.vertex_groups]
+            while group_name in existing:
+                group_name = f"{base_name}_{i}"
+                i += 1
+
+            if obj.type == 'MESH':
+                print(f"creating group for MESH object '{obj.name}'")
+                if vert_mapping and obj.name in vert_mapping:
+                    verts = vert_mapping[obj.name]
+                else:
+                    verts = list(range(len(obj.data.vertices)))
+
+                group = obj.vertex_groups.new(name=group_name)
+                group.add(verts, 1.0, "REPLACE")
+                group_mapping[f"{obj.name}_{group_name}"] = group.name
+
+            elif obj.type == 'GPENCIL': # <<==================== NOT IMPLEMENTING IN API YET
+                print(f"creating group for GP object '{obj.name}'")
+                if vert_mapping and obj.name in vert_mapping:
+                    verts = vert_mapping[obj.name]
+                else:
+                    verts = []
+                    for layer in obj.data.layers:
+                        for frame in layer.frames:
+                            for stroke in frame.strokes:
+                                verts.extend(range(len(stroke.points)))
+
+                if verts:
+                    group = obj.vertex_groups.new(name=group_name)
+                    group.add(verts, 1.0, "REPLACE")
+                    group_mapping[f"{obj.name}_{group_name}"] = group.name
+
+            if mode != obj.mode:
+                bpy.ops.object.editmode_toggle()
+
+        return group_mapping
+        
+    # Original ----------------------------------------------------------------------------------------
+    '''
     def set_vertex_group(self, objects, vert_mapping):
         group_mapping = {}
         for obj in objects:
@@ -578,7 +770,8 @@ class Op_LatticeCreateOperator(bpy.types.Operator):
                 bpy.ops.object.editmode_toggle()
 
         return group_mapping
-        
+    '''
+         
     def for_edit_mode(self, context):
         active_object = context.view_layer.objects.active
 #        try:

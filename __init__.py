@@ -17,13 +17,13 @@ from bpy.types import PropertyGroup
 
 bl_info = {
     "name" : "SimpleLattice",
-    "author" : "benjamin.sauder, Eugene Dudavkin",
-    "version": (0, 1, 6),
+    "author" : "benjamin.sauder, Eugene Dudavkin, Ley (fork)",
+    "version": (0, 1, 7),
     "blender" : (2, 93, 0),
     "location": "View3D",
     "description" : "A tool to simplify the workflow with lattice objects.",
     "doc_url": "https://blenderartists.org/t/simplelattice-deform-with-pleasure/1321032",
-    "tracker_url": "https://github.com/BenjaminSauder/SimpleLattice", 
+    "tracker_url": "https://github.com/Ley491/SimpleLattice", 
     "category" : "Object",
 }
 
